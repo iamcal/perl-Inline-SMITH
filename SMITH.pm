@@ -1,6 +1,6 @@
 package Inline::SMITH;
 
-$VERSION = '0.01';
+$VERSION = '0.03';
 require Inline;
 @ISA = qw(Inline);
 use strict;
@@ -65,7 +65,7 @@ sub smith_load {
 		my $func_code = $4;
 		# print "loaded function $func_name\n";
 		$func_code =~ s/\|/\\|/g;
-		$out .= "sub $func_name { Inline::SMITH::smith_run(q|$func_code|, \$_[0]); }\n";
+		$out .= "sub $func_name { return Inline::SMITH::smith_run(q|$func_code|, \$_[0]); }\n";
 	}
 
 	return $out;
@@ -74,7 +74,20 @@ sub smith_load {
 sub smith_run {
 	my ($code, $data) = @_;
 
-	my @data = split(//, $data);
+	my $buffer = "";
+	my @data;
+	my $input_callback;
+	my $output_callback;
+	my $echo = 1;
+
+	if (ref $data eq 'HASH'){
+		@data = split(//, ${$data}{input}) if ${$data}{input};
+		$input_callback = ${$data}{input_callback} || 0;
+		$output_callback = ${$data}{output_callback} || 0;
+		$echo = ${$data}{echo} || 0;
+	}else{
+		@data = split(//, $data);
+	}
 
 	my $mem = [];
 	my $reg = [];
@@ -136,17 +149,23 @@ sub smith_run {
 		} elsif ($mem->[$pc] =~ /^MOV\s*R(\d+)\s*,\s*PC$/) {			# MOV reg, PC
 			$reg->[$1] = $pc;
 		} elsif ($mem->[$pc] =~ /^MOV\s*TTY\s*,\s*R(\d+)$/) {			# MOV TTY, reg
-			print chr($reg->[$1]);
+			print chr($reg->[$1]) if $echo;
+			$buffer .= chr($reg->[$1]);
+			&{$output_callback}(chr($reg->[$1])) if $output_callback;
 		} elsif ($mem->[$pc] =~ /^MOV\s*TTY\s*,\s*R\[R(\d+)\]$/) {		# MOV TTY, [reg]
-			print chr($reg->[$reg->[$1]]);
+			print chr($reg->[$reg->[$1]]) if $echo;
+			$buffer .= chr($reg->[$reg->[$1]]);
+			&{$output_callback}(chr($reg->[$reg->[$1]])) if $output_callback;
 		} elsif ($mem->[$pc] =~ /^MOV\s*R(\d+)\s*,\s*TTY$/) {			# MOV reg, TTY
-			if ($reg->[$1] = shift @data) {
+			$reg->[$1] = ($input_callback)?&{$input_callback}:shift @data;
+			if ($reg->[$1]) {
 				$reg->[$1] = ord($reg->[$1]);					
 			} else {
 				$reg->[$1] = 0;
 			}
 		} elsif ($mem->[$pc] =~ /^MOV\s*R\[R(\d+)\]\s*,\s*TTY$/) {		# MOV [reg], TTY
-			if ($reg->[$reg->[$1]] = shift @data) {
+			$reg->[$reg->[$1]] = ($input_callback)?&{$input_callback}:shift @data;
+			if ($reg->[$reg->[$1]]) {
 				$reg->[$reg->[$1]] = ord($reg->[$reg->[$1]]);
 			} else {
 				$reg->[$reg->[$1]] = 0;
@@ -213,6 +232,8 @@ sub smith_run {
 	#
 	# we're done
 	#
+
+	return $buffer;
 }
 
 1;
@@ -299,10 +320,39 @@ The first parameter passed to an Inline::SMITH function is converted
 to a stream of bytes. This stream is then accessable using the TTY
 command in SMITH.
 
+If you pass a hash instead of a string, then Inline::SMITH can change
+it's IO behavoir. The following keys are recognised:
+
+=over 4
+
+=item input
+
+A plain old input buffer (a string)
+
+=item echo
+
+Set to 1 to enable echoing of output to the screen. It is turned off
+by default when passing a hash.
+
+=item input_callback
+
+A function ref which is called each time a character of input is needed.
+The function should return a 0 to indicate end of input.
+
+=item output_callback
+
+A function ref which is called whenever a byte needs outputting.
+The byte is passed as a single character string in the first argument.
+
+=back
+
 =head2 Return values
 
-There is currently no way to pass back a return value from a SMITH
-function.
+A SMITH function returns it's output buffer as a string. If echo was
+enabled, or if it was implicitly on by using the scalar calling method,
+then this buffer will have already been echo'd. The buffer is always
+returned, regardless of the state of the echo flag or the existence
+of an output callback.
 
 
 =head1 AUTHOR
@@ -314,17 +364,17 @@ Cal Henderson, E<lt>cal@iamcal.comE<gt>
 
 Thanks to:
 
-Brian Ingerson, for writing the C<Inline> module.
+=over 1
 
-Chris Pressey, for creating SMITH and the perl interpreter this module
-is based on.
+=item Brian Ingerson, for writing the C<Inline> module.
+
+=item Chris Pressey, for creating SMITH and the perl interpreter this module is based on and suggesting IO callbacks.
 
 =back
 
-
 =head1 SEE ALSO
 
-=over 4
+=over 1
 
 =item L<perl>
 
